@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ระบบหยิบ-แพ็คสินค้า และพิมพ์ใบจ่าหน้า — FreshSmile</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header no-print">
+    <div class="header-inner">
+      <h1>FreshSmile — หลังบ้าน (Picking & Packing)</h1>
+      <nav class="nav-links">
+        <a href="index.html">หน้าร้าน</a>
+        <a href="admin.html" class="active">หลังบ้าน (หยิบ/แพ็ค/จ่าหน้า)</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card-box no-print">
+      <div class="admin-toolbar">
+        <h3 class="section-title" style="margin:0;">รายการออเดอร์สำหรับหยิบสินค้าและแพ็คพัสดุ</h3>
+        <button class="btn-sm btn-refresh" onclick="loadOrders()">รีเฟรชข้อมูล</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>รหัสออเดอร์</th>
+              <th>ลูกค้า / ที่อยู่จัดส่ง</th>
+              <th>รายการสินค้า (Pick List)</th>
+              <th>ยอดรวม</th>
+              <th>สถานะ / พิมพ์ใบปะหน้า</th>
+            </tr>
+          </thead>
+          <tbody id="ordersBody">
+            <tr><td colspan="5" style="text-align:center;">กำลังโหลดข้อมูลจาก Google Sheet...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="printArea" class="label-preview hidden"></section>
+  </main>
+
+  <script>
+    const API = 'https://script.google.com/macros/s/AKfycbx-TheebtMLBjbomBog2Fyw3tKG3DRIWlEgwIpeIJ2iirmsQ-9o56YXy6iedj91jcr1LA/exec';
+    let cachedOrders = [];
+
+    async function loadOrders() {
+      const tbody = document.getElementById('ordersBody');
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">กำลังโหลดข้อมูลจาก Google Sheet...</td></tr>';
+      try {
+        const res = await fetch(API + '?action=orders');
+        const rows = await res.json();
+        cachedOrders = rows;
+
+        if (!rows || !rows.length) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">ยังไม่มีรายการสั่งซื้อ</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = rows.map((row, idx) => {
+          const vals = Object.values(row);
+          const [orderId, dateStr, name, phone, address, zip, itemsRaw, total, status] = vals;
+          let itemsHtml = itemsRaw || '';
+          try {
+            const arr = JSON.parse(itemsRaw);
+            itemsHtml = arr.map(i => `<div>• <strong>${i.sku}</strong> ${i.name} (x${i.qty})</div>`).join('');
+          } catch {}
+
+          return `
+            <tr>
+              <td><strong>${orderId}</strong><br><small class="muted">${dateStr || ''}</small></td>
+              <td><strong>${name}</strong><br>โทร: ${phone}<br>${address} ${zip}</td>
+              <td>${itemsHtml}</td>
+              <td><strong>฿${total}</strong></td>
+              <td>
+                <select class="status-select" onchange="updateStatus('${orderId}', this.value)">
+                  <option value="PENDING" ${status === 'PENDING' ? 'selected' : ''}>PENDING (รอหยิบ)</option>
+                  <option value="PACKED" ${status === 'PACKED' ? 'selected' : ''}>PACKED (แพ็คแล้ว)</option>
+                  <option value="SHIPPED" ${status === 'SHIPPED' ? 'selected' : ''}>SHIPPED (จัดส่งแล้ว)</option>
+                </select>
+                <button class="btn-sm btn-print" onclick="printLabel(${idx})">พิมพ์ใบหยิบ + จ่าหน้าพัสดุ</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" style="color:red;">โหลดข้อมูลไม่สำเร็จ: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function updateStatus(orderId, status) {
+      try {
+        await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'status', orderId, status })
+        });
+      } catch (err) {
+        alert('อัปเดตสถานะไม่สำเร็จ: ' + err.message);
+      }
+    }
+
+    function printLabel(idx) {
+      const vals = Object.values(cachedOrders[idx]);
+      const [orderId, dateStr, name, phone, address, zip, itemsRaw, total] = vals;
+      let itemsList = itemsRaw || '';
+      try {
+        const arr = JSON.parse(itemsRaw);
+        itemsList = arr.map(i => `<li>[ <strong>${i.sku}</strong> ] ${i.name} — <strong>จำนวน ${i.qty} กล่อง</strong></li>`).join('');
+      } catch {}
+
+      const area = document.getElementById('printArea');
+      area.classList.remove('hidden');
+      area.innerHTML = `
+        <div class="label-header">
+          <div>
+            <strong>ใบจ่าหน้าพัสดุ (SHIPPING LABEL)</strong><br>
+            ผู้ส่ง: ร้าน FreshSmile ยาสีฟัน
+          </div>
+          <div style="text-align:right;">
+            <strong>Order ID: ${orderId}</strong><br>
+            <small>${dateStr || ''}</small>
+          </div>
+        </div>
+        <div class="label-box">
+          <strong>ผู้รับ (TO):</strong> ${name}<br>
+          <strong>เบอร์โทร:</strong> ${phone}<br>
+          <strong>ที่อยู่จัดส่ง:</strong> ${address}<br>
+          <strong>รหัสไปรษณีย์:</strong> <span class="zip-code">${zip}</span>
+        </div>
+        <div class="pick-box">
+          <strong>รายการหยิบสินค้าเพื่อแพ็ค (PICKING & PACKING LIST):</strong>
+          <ul>${itemsList}</ul>
+          <div style="margin-top:8px;"><strong>ยอดรวม: ฿${total}</strong></div>
+        </div>
+        <div class="no-print" style="margin-top:14px; text-align:right;">
+          <button class="btn-sm btn-print" onclick="window.print()">สั่งพิมพ์ / Save PDF</button>
+        </div>
+      `;
+      area.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    loadOrders();
+  </script>
+</body>
+</html>
